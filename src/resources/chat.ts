@@ -60,7 +60,7 @@ export class CompletionsResource {
     return this.create({
       ...params,
       stream: true,
-    });
+    } as ChatCompletionCreateParamsStreaming);
   }
 }
 
