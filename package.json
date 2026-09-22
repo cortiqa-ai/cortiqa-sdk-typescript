@@ -1,6 +1,6 @@
 {
   "name": "@cortiqa/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Official TypeScript & JavaScript client library for Cortiqa AI & Falin Foundation Models",
   "keywords": [
     "cortiqa",

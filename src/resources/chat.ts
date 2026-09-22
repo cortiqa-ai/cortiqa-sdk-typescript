@@ -8,6 +8,31 @@ import {
   ChatCompletionCreateParamsStreaming,
 } from "../types/chat.js";
 
+function normalizeTools(tools?: any[]): any[] | undefined {
+  if (!tools || !Array.isArray(tools)) return undefined;
+  return tools.map((tool) => {
+    if (tool && typeof tool === "object") {
+      if (tool.type === "function" && tool.function) {
+        return tool;
+      }
+      if (tool.function && !tool.type) {
+        return { type: "function", function: tool.function };
+      }
+      if (tool.name && !tool.function) {
+        const { name, description, parameters, ...rest } = tool;
+        const func: Record<string, unknown> = { name };
+        if (description !== undefined) func.description = description;
+        if (parameters !== undefined) func.parameters = parameters;
+        return {
+          type: "function",
+          function: { ...func, ...rest },
+        };
+      }
+    }
+    return tool;
+  });
+}
+
 export class CompletionsResource {
   private client: Cortiqa;
 
@@ -35,20 +60,35 @@ export class CompletionsResource {
   async create(
     params: ChatCompletionCreateParams
   ): Promise<ChatCompletion | Stream<ChatCompletionChunk>> {
+    const effectiveModel = params.model || this.client.defaultModel;
+    const normalizedTools = normalizeTools(params.tools as any[]);
+
+    const payload: Record<string, unknown> = {
+      ...params,
+      model: effectiveModel,
+    };
+    if (normalizedTools !== undefined) {
+      payload.tools = normalizedTools;
+    }
+
     if (params.stream) {
       return this.client.requestStream<ChatCompletionChunk>("/v1/chat/completions", {
         method: "POST",
-        body: params,
+        body: payload,
       });
     }
 
     const response = await this.client.request<ChatCompletion>("/v1/chat/completions", {
       method: "POST",
-      body: params,
+      body: payload,
     });
 
-    if (response.choices?.[0]?.message?.content) {
-      response.content = response.choices[0].message.content;
+    const msg = response.choices?.[0]?.message;
+    if (msg?.content) {
+      response.content = msg.content;
+    }
+    if (msg) {
+      response.reasoning = msg.reasoning || msg.reasoning_content || null;
     }
     return response;
   }

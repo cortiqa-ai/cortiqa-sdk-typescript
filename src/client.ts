@@ -1,8 +1,10 @@
 import {
   APIError,
+  BadRequestError,
   AuthenticationError,
   PermissionDeniedError,
   NotFoundError,
+  UnprocessableEntityError,
   RateLimitError,
   InternalServerError,
   APIConnectionError,
@@ -12,6 +14,8 @@ import { ChatResource, MessagesResource } from "./resources/chat.js";
 import { ModelsResource } from "./resources/models.js";
 import { Stream } from "./streaming.js";
 import { VERSION } from "./version.js";
+
+export const DEFAULT_MODEL = "openai/gpt-oss-120b";
 
 export interface ClientOptions {
   /**
@@ -39,6 +43,12 @@ export interface ClientOptions {
   maxRetries?: number;
 
   /**
+   * Default model to use when not specified in completions requests.
+   * Defaults to "openai/gpt-oss-120b".
+   */
+  defaultModel?: string;
+
+  /**
    * Custom fetch function (e.g. for testing or proxying).
    */
   fetch?: typeof fetch;
@@ -51,11 +61,20 @@ export interface RequestOptions {
   timeout?: number;
 }
 
+export interface PromptOptions {
+  model?: string;
+  system?: string;
+  temperature?: number;
+  maxTokens?: number;
+  [key: string]: unknown;
+}
+
 export class Cortiqa {
   readonly apiKey: string;
   readonly baseURL: string;
   readonly timeout: number;
   readonly maxRetries: number;
+  readonly defaultModel: string;
   private readonly _fetch: typeof fetch;
 
   // Resource groups
@@ -79,6 +98,7 @@ export class Cortiqa {
     this.baseURL = (options.baseURL || envBaseURL || "https://api.cortiqa.co").replace(/\/+$/, "");
     this.timeout = options.timeout ?? 60_000;
     this.maxRetries = options.maxRetries ?? 2;
+    this.defaultModel = options.defaultModel || DEFAULT_MODEL;
     this._fetch = options.fetch || globalThis.fetch;
 
     if (!this._fetch) {
@@ -91,6 +111,30 @@ export class Cortiqa {
     this.chat = new ChatResource(this);
     this.messages = new MessagesResource(this);
     this.models = new ModelsResource(this);
+  }
+
+  /**
+   * One-liner convenience helper to prompt a model and get string response directly.
+   *
+   * Example:
+   *   const answer = await client.prompt("Explain quantum computing in 1 sentence.");
+   *   console.log(answer);
+   */
+  async prompt(promptText: string, options: PromptOptions = {}): Promise<string> {
+    const messages: any[] = [];
+    if (options.system) {
+      messages.push({ role: "system", content: options.system });
+    }
+    messages.push({ role: "user", content: promptText });
+
+    const completion = await this.chat.completions.create({
+      model: options.model || this.defaultModel,
+      messages,
+      temperature: options.temperature,
+      max_tokens: options.maxTokens,
+      ...options,
+    });
+    return completion.content || completion.choices?.[0]?.message?.content || "";
   }
 
   /**
@@ -215,27 +259,61 @@ export class Cortiqa {
   }
 
   private handleErrorResponse(status: number, errorData: any): never {
-    const message =
-      (typeof errorData === "object" && errorData !== null
-        ? errorData.error?.message || errorData.error || errorData.message
-        : String(errorData)) || `HTTP ${status} error`;
+    let param: string | undefined;
+    let code: string | undefined;
+    let errorType: string | undefined;
+    let message: string;
+
+    if (typeof errorData === "object" && errorData !== null) {
+      if (Array.isArray(errorData.detail) && errorData.detail.length > 0) {
+        const first = errorData.detail[0];
+        if (Array.isArray(first.loc) && first.loc.length > 0) {
+          param = String(first.loc[first.loc.length - 1]);
+        }
+        code = first.type;
+        const msg = first.msg || JSON.stringify(first);
+        message = param ? `Parameter '${param}': ${msg}` : msg;
+      } else if (typeof errorData.detail === "string") {
+        message = errorData.detail;
+      } else if (errorData.error && typeof errorData.error === "object") {
+        message = errorData.error.message || JSON.stringify(errorData.error);
+        param = errorData.error.param;
+        code = errorData.error.code;
+        errorType = errorData.error.type;
+      } else {
+        message = errorData.message || errorData.error || `HTTP ${status} error`;
+        param = errorData.param;
+        code = errorData.code;
+        errorType = errorData.type;
+      }
+    } else {
+      message = String(errorData) || `HTTP ${status} error`;
+    }
+
+    if (param && !message.includes(`'${param}'`) && !message.includes(`[${param}]`)) {
+      message = `[${param}] ${message}`;
+    }
 
     switch (status) {
+      case 400:
+        throw new BadRequestError(status, errorData, message, param, code, errorType);
       case 401:
-        throw new AuthenticationError(status, errorData, message);
+        throw new AuthenticationError(status, errorData, message, param, code, errorType);
       case 403:
-        throw new PermissionDeniedError(status, errorData, message);
+        throw new PermissionDeniedError(status, errorData, message, param, code, errorType);
       case 404:
-        throw new NotFoundError(status, errorData, message);
+        throw new NotFoundError(status, errorData, message, param, code, errorType);
+      case 422:
+        throw new UnprocessableEntityError(status, errorData, message, param, code, errorType);
       case 429:
-        throw new RateLimitError(status, errorData, message);
+        throw new RateLimitError(status, errorData, message, param, code, errorType);
       case 500:
       case 502:
       case 503:
       case 504:
-        throw new InternalServerError(status, errorData, message);
+        throw new InternalServerError(status, errorData, message, param, code, errorType);
       default:
-        throw new APIError(status, errorData, message);
+        throw new APIError(status, errorData, message, param, code, errorType);
     }
   }
 }

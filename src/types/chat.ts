@@ -11,8 +11,11 @@ export interface FunctionDefinition {
 }
 
 export interface Tool {
-  type: "function";
-  function: FunctionDefinition;
+  type?: "function";
+  function?: FunctionDefinition;
+  name?: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
 }
 
 export interface FunctionCall {
@@ -29,6 +32,8 @@ export interface ToolCall {
 export interface ChatMessage {
   role: Role;
   content: string | null;
+  reasoning?: string | null;
+  reasoning_content?: string | null;
   name?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
@@ -55,6 +60,8 @@ export interface ChatCompletion {
   usage?: Usage;
   /** Convenience getter for first choice text content */
   content?: string;
+  /** Convenience getter for model reasoning / thinking */
+  reasoning?: string | null;
 }
 
 export interface ChatCompletionChunkChoice {
@@ -62,6 +69,8 @@ export interface ChatCompletionChunkChoice {
   delta: {
     role?: Role;
     content?: string;
+    reasoning?: string | null;
+    reasoning_content?: string | null;
     tool_calls?: ToolCall[];
   };
   finish_reason?: string | null;
@@ -76,7 +85,7 @@ export interface ChatCompletionChunk {
 }
 
 export interface ChatCompletionCreateParamsNonStreaming {
-  model: string;
+  model?: string;
   messages: ChatMessage[];
   temperature?: number;
   max_tokens?: number;
@@ -88,7 +97,7 @@ export interface ChatCompletionCreateParamsNonStreaming {
 }
 
 export interface ChatCompletionCreateParamsStreaming {
-  model: string;
+  model?: string;
   messages: ChatMessage[];
   temperature?: number;
   max_tokens?: number;
